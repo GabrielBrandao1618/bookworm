@@ -18,14 +18,8 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
         }
     }
     pub fn get_page<T: DeserializeOwned>(&mut self, page: usize) -> BookwormResult<T> {
-        let page_offset = self.page_size * page;
-        let mut r = BufReader::new(&mut self.data_source);
-        r.seek(SeekFrom::Start(page_offset as u64))
-            .map_err(|_| BookwormError::new("Could not read page".to_string()))?;
-        let mut buf = vec![0; self.page_size];
-        r.read_exact(&mut buf)
-            .map_err(|_| BookwormError::new("Could not read data".to_string()))?;
-        let parsed: T = bincode::deserialize(&buf)
+        let raw_page = self.get_raw_page(page)?;
+        let parsed: T = bincode::deserialize(&raw_page)
             .map_err(|_| BookwormError::new("Could not parse data".to_string()))?;
         Ok(parsed)
     }
