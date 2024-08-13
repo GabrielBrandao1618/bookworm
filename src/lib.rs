@@ -36,20 +36,24 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
             .map_err(|_| BookwormError::new("Could not read page".to_string()))?;
         Ok(buf)
     }
-    pub fn write_page<T: Serialize>(&mut self, page: usize, data: &T) -> BookwormResult<()> {
+    pub fn write_raw_page(&mut self, page: usize, data: &[u8]) -> BookwormResult<()> {
         let page_offset = self.page_size * page;
         self.data_source
             .seek(SeekFrom::Start(page_offset as u64))
             .map_err(|_| BookwormError::new("Could not write to page".to_string()))?;
-        let serialized = bincode::serialize(data)
-            .map_err(|_| BookwormError::new("Could not serialize data".to_string()))?;
-        let serialized_len = serialized.len();
-        let remaining_space = self.page_size - serialized_len;
+        let remaining_space = self.page_size - data.len();
         self.data_source
-            .write_all(&serialized)
+            .write_all(&data)
             .map_err(|_| BookwormError::new("Could not write page".to_string()))?;
         self.data_source
             .write_all(&vec![0; remaining_space])
+            .map_err(|_| BookwormError::new("Could not write page".to_string()))?;
+        Ok(())
+    }
+    pub fn write_page<T: Serialize>(&mut self, page: usize, data: &T) -> BookwormResult<()> {
+        let serialized = bincode::serialize(data)
+            .map_err(|_| BookwormError::new("Could not serialize data".to_string()))?;
+        self.write_raw_page(page, &serialized)
             .map_err(|_| BookwormError::new("Could not write page".to_string()))?;
         Ok(())
     }
