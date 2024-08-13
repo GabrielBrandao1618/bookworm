@@ -172,5 +172,6 @@ pub mod tests {
         assert_eq!(iterator.next().unwrap(), TestData::new(14, false));
         assert_eq!(iterator.next().unwrap(), TestData::new(17, true));
         assert_eq!(iterator.next().unwrap(), TestData::new(6, false));
+        assert_eq!(iterator.next(), None);
     }
 }
