@@ -9,7 +9,6 @@ pub struct Pager<'a, S: Read + Write + Seek> {
     data_source: &'a mut S,
     page_size: usize,
 }
-
 impl<'a, S: Read + Write + Seek> Pager<'a, S> {
     pub fn new(page_size: usize, data_source: &'a mut S) -> Self {
         Self {
@@ -50,6 +49,75 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
             .map_err(|_| BookwormError::new("Could not write page".to_string()))?;
         Ok(())
     }
+    pub fn get_raw_iterator(self) -> RawPagerIterator<'a, S> {
+        let _ = self.data_source.seek(SeekFrom::Start(0));
+        self.into()
+    }
+}
+
+pub struct RawPagerIterator<'a, S: Read + Write + Seek> {
+    data_source: &'a mut S,
+    page_size: usize,
+}
+
+impl<'a, S: Read + Write + Seek> Into<RawPagerIterator<'a, S>> for Pager<'a, S> {
+    fn into(self) -> RawPagerIterator<'a, S> {
+        let _ = self.data_source.seek(SeekFrom::Start(0));
+        RawPagerIterator {
+            data_source: self.data_source,
+            page_size: self.page_size,
+        }
+    }
+}
+
+impl<S: Read + Write + Seek> Iterator for RawPagerIterator<'_, S> {
+    type Item = Vec<u8>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut buf = vec![0; self.page_size];
+        match self.data_source.read_exact(&mut buf) {
+            Ok(_) => Some(buf),
+            Err(_) => None,
+        }
+    }
+}
+
+pub struct PagerIterator<'a, S: Read + Write + Seek, T: DeserializeOwned> {
+    data_source: &'a mut S,
+    page_size: usize,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<S, T> Iterator for PagerIterator<'_, S, T>
+where
+    S: Read + Write + Seek,
+    T: DeserializeOwned,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut buf = vec![0; self.page_size];
+        if let Ok(_) = self.data_source.read_exact(&mut buf) {
+            if let Ok(parsed) = bincode::deserialize(&buf) {
+                return Some(parsed);
+            }
+        }
+        None
+    }
+}
+
+impl<'a, S: Read + Write + Seek, T: DeserializeOwned> Into<PagerIterator<'a, S, T>>
+    for Pager<'a, S>
+{
+    fn into(self) -> PagerIterator<'a, S, T> {
+        let _ = self.data_source.seek(SeekFrom::Start(0));
+        let iterator = PagerIterator {
+            page_size: self.page_size,
+            data_source: self.data_source,
+            _marker: Default::default(),
+        };
+        iterator
+    }
 }
 
 #[cfg(test)]
@@ -85,5 +153,21 @@ pub mod tests {
         assert_eq!(pager.get_page::<TestData>(0).unwrap(), test_data1);
         assert_eq!(pager.get_page::<TestData>(1).unwrap(), test_data2);
         assert_eq!(pager.get_page::<TestData>(2).unwrap(), test_data3);
+    }
+
+    #[test]
+    fn test_iter_pages() {
+        let mut data_source = Cursor::new(Vec::new());
+        let mut pager = Pager::new(1024, &mut data_source);
+        pager.write_page(0, &TestData::new(10, true)).unwrap();
+        pager.write_page(1, &TestData::new(14, false)).unwrap();
+        pager.write_page(2, &TestData::new(17, true)).unwrap();
+        pager.write_page(3, &TestData::new(6, false)).unwrap();
+
+        let mut iterator: PagerIterator<_, TestData> = pager.into();
+        assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
+        assert_eq!(iterator.next().unwrap(), TestData::new(14, false));
+        assert_eq!(iterator.next().unwrap(), TestData::new(17, true));
+        assert_eq!(iterator.next().unwrap(), TestData::new(6, false));
     }
 }
