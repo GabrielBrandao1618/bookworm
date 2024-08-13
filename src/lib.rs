@@ -53,6 +53,10 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
         let _ = self.data_source.seek(SeekFrom::Start(0));
         self.into()
     }
+    pub fn get_iterator<T: DeserializeOwned>(self) -> PagerIterator<'a, S, T> {
+        let _ = self.data_source.seek(SeekFrom::Start(0));
+        self.into()
+    }
 }
 
 pub struct RawPagerIterator<'a, S: Read + Write + Seek> {
@@ -111,12 +115,11 @@ impl<'a, S: Read + Write + Seek, T: DeserializeOwned> Into<PagerIterator<'a, S, 
 {
     fn into(self) -> PagerIterator<'a, S, T> {
         let _ = self.data_source.seek(SeekFrom::Start(0));
-        let iterator = PagerIterator {
+        PagerIterator {
             page_size: self.page_size,
             data_source: self.data_source,
             _marker: Default::default(),
-        };
-        iterator
+        }
     }
 }
 
@@ -164,7 +167,7 @@ pub mod tests {
         pager.write_page(2, &TestData::new(17, true)).unwrap();
         pager.write_page(3, &TestData::new(6, false)).unwrap();
 
-        let mut iterator: PagerIterator<_, TestData> = pager.into();
+        let mut iterator = pager.get_iterator::<TestData>();
         assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
         assert_eq!(iterator.next().unwrap(), TestData::new(14, false));
         assert_eq!(iterator.next().unwrap(), TestData::new(17, true));
