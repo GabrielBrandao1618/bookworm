@@ -54,11 +54,9 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
         Ok(())
     }
     pub fn get_raw_iterator(self) -> RawPagerIterator<'a, S> {
-        let _ = self.data_source.seek(SeekFrom::Start(0));
         self.into()
     }
     pub fn get_iterator<T: DeserializeOwned>(self) -> PagerIterator<'a, S, T> {
-        let _ = self.data_source.seek(SeekFrom::Start(0));
         self.into()
     }
     pub fn push<T: Serialize>(&mut self, data: &T) -> BookwormResult<()> {
@@ -75,7 +73,7 @@ pub struct RawPagerIterator<'a, S: Read + Write + Seek> {
 
 impl<'a, S: Read + Write + Seek> Into<RawPagerIterator<'a, S>> for Pager<'a, S> {
     fn into(self) -> RawPagerIterator<'a, S> {
-        let _ = self.data_source.seek(SeekFrom::Start(0));
+        let _ = self.data_source.rewind();
         RawPagerIterator {
             data_source: self.data_source,
             page_size: self.page_size,
@@ -123,7 +121,7 @@ impl<'a, S: Read + Write + Seek, T: DeserializeOwned> Into<PagerIterator<'a, S, 
     for Pager<'a, S>
 {
     fn into(self) -> PagerIterator<'a, S, T> {
-        let _ = self.data_source.seek(SeekFrom::Start(0));
+        let _ = self.data_source.rewind();
         PagerIterator {
             page_size: self.page_size,
             data_source: self.data_source,
