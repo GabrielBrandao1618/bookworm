@@ -8,12 +8,16 @@ pub mod error;
 pub struct Pager<'a, S: Read + Write + Seek> {
     data_source: &'a mut S,
     page_size: usize,
+    last_page: usize,
 }
 impl<'a, S: Read + Write + Seek> Pager<'a, S> {
     pub fn new(page_size: usize, data_source: &'a mut S) -> Self {
+        let data_source_len = data_source.seek(SeekFrom::End(0)).unwrap_or(0) as usize;
+        let last_page = data_source_len / page_size;
         Self {
             page_size,
             data_source,
+            last_page,
         }
     }
     pub fn get_page<T: DeserializeOwned>(&mut self, page: usize) -> BookwormResult<T> {
@@ -56,6 +60,11 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
     pub fn get_iterator<T: DeserializeOwned>(self) -> PagerIterator<'a, S, T> {
         let _ = self.data_source.seek(SeekFrom::Start(0));
         self.into()
+    }
+    pub fn push<T: Serialize>(&mut self, data: &T) -> BookwormResult<()> {
+        self.write_page(self.last_page, data)?;
+        self.last_page += 1;
+        Ok(())
     }
 }
 
@@ -173,5 +182,28 @@ pub mod tests {
         assert_eq!(iterator.next().unwrap(), TestData::new(17, true));
         assert_eq!(iterator.next().unwrap(), TestData::new(6, false));
         assert_eq!(iterator.next(), None);
+    }
+    #[test]
+    fn test_push() {
+        let mut data_source = Cursor::new(Vec::new());
+        let mut pager = Pager::new(1024, &mut data_source);
+
+        pager.push(&TestData::new(10, true)).unwrap();
+        pager.push(&TestData::new(12, false)).unwrap();
+        pager.push(&TestData::new(6, true)).unwrap();
+
+        let mut iterator = pager.get_iterator::<TestData>();
+        assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
+        assert_eq!(iterator.next().unwrap(), TestData::new(12, false));
+        assert_eq!(iterator.next().unwrap(), TestData::new(6, true));
+
+        drop(iterator);
+        let mut pager = Pager::new(1024, &mut data_source);
+        pager.push(&TestData::new(18, false)).unwrap();
+        let mut iterator = pager.get_iterator::<TestData>();
+        assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
+        assert_eq!(iterator.next().unwrap(), TestData::new(12, false));
+        assert_eq!(iterator.next().unwrap(), TestData::new(6, true));
+        assert_eq!(iterator.next().unwrap(), TestData::new(18, false));
     }
 }
