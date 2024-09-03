@@ -44,6 +44,9 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
         Ok(buf)
     }
     pub fn write_raw_page(&mut self, page: usize, data: &[u8]) -> BookwormResult<()> {
+        if page >= self.pages_count {
+            return Err(BookwormError::new("Page doesn't exist".to_string()));
+        }
         let page_offset = self.page_size * page;
         self.data_source
             .seek(SeekFrom::Start(page_offset as u64))
@@ -58,6 +61,9 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
         Ok(())
     }
     pub fn write_page<T: Serialize>(&mut self, page: usize, data: &T) -> BookwormResult<()> {
+        if page >= self.pages_count {
+            return Err(BookwormError::new("Page doesn't exist".to_string()));
+        }
         let serialized = bincode::serialize(data)
             .map_err(|_| BookwormError::new("Could not serialize data".to_string()))?;
         self.write_raw_page(page, &serialized)
@@ -71,8 +77,8 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
         self.into()
     }
     pub fn push<T: Serialize>(&mut self, data: &T) -> BookwormResult<()> {
-        self.write_page(self.pages_count, data)?;
         self.pages_count += 1;
+        self.write_page(self.pages_count - 1, data)?;
         Ok(())
     }
     pub fn pop(&mut self) -> BookwormResult<()> {
@@ -192,10 +198,10 @@ pub mod tests {
     fn test_iter_pages() {
         let mut data_source = Cursor::new(Vec::new());
         let mut pager = Pager::new(1024, &mut data_source);
-        pager.write_page(0, &TestData::new(10, true)).unwrap();
-        pager.write_page(1, &TestData::new(14, false)).unwrap();
-        pager.write_page(2, &TestData::new(17, true)).unwrap();
-        pager.write_page(3, &TestData::new(6, false)).unwrap();
+        pager.push(&TestData::new(10, true)).unwrap();
+        pager.push(&TestData::new(14, false)).unwrap();
+        pager.push(&TestData::new(17, true)).unwrap();
+        pager.push(&TestData::new(6, false)).unwrap();
 
         let mut iterator = pager.get_iterator::<TestData>();
         assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
