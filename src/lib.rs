@@ -1,4 +1,7 @@
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::{
+    fmt::Debug,
+    io::{BufReader, Read, Seek, SeekFrom, Write},
+};
 
 use error::{BookwormError, BookwormResult};
 use serde::{de::DeserializeOwned, ser::Serialize};
@@ -8,7 +11,7 @@ pub mod error;
 pub struct Pager<'a, S: Read + Write + Seek> {
     data_source: &'a mut S,
     page_size: usize,
-    last_page: usize,
+    pages_count: usize,
 }
 impl<'a, S: Read + Write + Seek> Pager<'a, S> {
     pub fn new(page_size: usize, data_source: &'a mut S) -> Self {
@@ -17,22 +20,26 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
         Self {
             page_size,
             data_source,
-            last_page,
+            pages_count: last_page,
         }
     }
-    pub fn get_page<T: DeserializeOwned>(&mut self, page: usize) -> BookwormResult<T> {
+    pub fn get_page<T: DeserializeOwned + Debug>(&mut self, page: usize) -> BookwormResult<T> {
         let raw_page = self.get_raw_page(page)?;
         let parsed: T = bincode::deserialize(&raw_page)
             .map_err(|_| BookwormError::new("Could not parse data".to_string()))?;
         Ok(parsed)
     }
     pub fn get_raw_page(&mut self, page: usize) -> BookwormResult<Vec<u8>> {
+        if page >= self.pages_count {
+            return Err(BookwormError::new("Page doesn't exist".to_string()));
+        }
         let page_offset = self.page_size * page;
         let mut r = BufReader::new(&mut self.data_source);
         r.seek(SeekFrom::Start(page_offset as u64))
             .map_err(|_| BookwormError::new("Could not read page data".to_string()))?;
         let mut buf = vec![0; self.page_size];
-        r.read_exact(&mut buf)
+        self.data_source
+            .read_exact(&mut buf)
             .map_err(|_| BookwormError::new("Could not read page".to_string()))?;
         Ok(buf)
     }
@@ -64,8 +71,20 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
         self.into()
     }
     pub fn push<T: Serialize>(&mut self, data: &T) -> BookwormResult<()> {
-        self.write_page(self.last_page, data)?;
-        self.last_page += 1;
+        self.write_page(self.pages_count, data)?;
+        self.pages_count += 1;
+        Ok(())
+    }
+    pub fn pop(&mut self) -> BookwormResult<()> {
+        self.pages_count -= 1;
+        let page_offset = self.pages_count * self.page_size;
+        self.data_source
+            .seek(SeekFrom::Start(page_offset as u64))
+            .map_err(|_| BookwormError::new("Could not read page".to_owned()))?;
+        let data = vec![0; self.page_size];
+        self.data_source
+            .write_all(&data)
+            .map_err(|_| BookwormError::new("Could not remove page".to_owned()))?;
         Ok(())
     }
 }
@@ -160,9 +179,9 @@ pub mod tests {
         let test_data1 = TestData::new(10, true);
         let test_data2 = TestData::new(15, false);
         let test_data3 = TestData::new(20, true);
-        pager.write_page(0, &test_data1).unwrap();
-        pager.write_page(1, &test_data2).unwrap();
-        pager.write_page(2, &test_data3).unwrap();
+        pager.push(&test_data1).unwrap();
+        pager.push(&test_data2).unwrap();
+        pager.push(&test_data3).unwrap();
 
         assert_eq!(pager.get_page::<TestData>(0).unwrap(), test_data1);
         assert_eq!(pager.get_page::<TestData>(1).unwrap(), test_data2);
@@ -207,5 +226,15 @@ pub mod tests {
         assert_eq!(iterator.next().unwrap(), TestData::new(12, false));
         assert_eq!(iterator.next().unwrap(), TestData::new(6, true));
         assert_eq!(iterator.next().unwrap(), TestData::new(18, false));
+    }
+    #[test]
+    fn test_remove_page() {
+        let mut data_source = Cursor::new(Vec::new());
+        let mut pager = Pager::new(32, &mut data_source);
+        let test_data = TestData::new(10, true);
+        pager.push(&test_data).unwrap();
+        pager.get_page::<TestData>(0).unwrap();
+        pager.pop().unwrap();
+        pager.get_page::<TestData>(0).unwrap_err();
     }
 }
