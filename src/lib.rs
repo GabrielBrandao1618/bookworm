@@ -15,11 +15,15 @@ mod pager;
 
 pub struct Bookworm<'a, S: Read + Write + Seek> {
     pager: Pager<'a, S>,
+    swap: Pager<'a, S>,
+    page_size: usize,
 }
 impl<'a, S: Read + Write + Seek> Bookworm<'a, S> {
-    pub fn new(page_size: usize, data_source: &'a mut S) -> Self {
+    pub fn new(page_size: usize, data_source: &'a mut S, swap: &'a mut S) -> Self {
         Self {
+            page_size,
             pager: Pager::new(page_size, data_source),
+            swap: Pager::new(page_size, swap),
         }
     }
     pub fn get_page<T: DeserializeOwned + Debug>(&mut self, page: usize) -> BookwormResult<T> {
@@ -46,6 +50,9 @@ impl<'a, S: Read + Write + Seek> Bookworm<'a, S> {
     pub fn pop(&mut self) -> BookwormResult<()> {
         self.pager.pop()
     }
+    pub fn delete(&mut self, page: usize) -> BookwormResult<()> {
+        Ok(())
+    }
 }
 
 pub struct RawPageIterator<'a, S: Read + Write + Seek> {
@@ -55,7 +62,7 @@ pub struct RawPageIterator<'a, S: Read + Write + Seek> {
 impl<'a, S: Read + Write + Seek> Into<RawPageIterator<'a, S>> for Bookworm<'a, S> {
     fn into(self) -> RawPageIterator<'a, S> {
         RawPageIterator {
-            pager_iterator: self.pager.get_raw_iterator(),
+            pager_iterator: self.pager.into_raw_iterator(0),
         }
     }
 }
@@ -91,7 +98,7 @@ impl<'a, S: Read + Write + Seek, T: DeserializeOwned> Into<PageIterator<'a, S, T
     fn into(self) -> PageIterator<'a, S, T> {
         let _ = self.pager.data_source.rewind();
         PageIterator {
-            pager_iterator: self.pager.get_iterator(),
+            pager_iterator: self.pager.into_iterator(0),
             _marker: Default::default(),
         }
     }

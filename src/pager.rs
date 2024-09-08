@@ -70,15 +70,54 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
             .map_err(|_| BookwormError::new("Could not write page".to_string()))?;
         Ok(())
     }
-    pub fn get_raw_iterator(self) -> RawPagerIterator<'a, S> {
-        self.into()
+    pub fn into_raw_iterator(self, starting_page: usize) -> RawPagerIterator<'a, S> {
+        let _ = self
+            .data_source
+            .seek(SeekFrom::Start((self.page_size * starting_page) as u64));
+        RawPagerIterator {
+            page_size: self.page_size,
+            data_source: self.data_source,
+        }
     }
-    pub fn get_iterator<T: DeserializeOwned>(self) -> PagerIterator<'a, S, T> {
-        self.into()
+    pub fn into_iterator<T: DeserializeOwned>(
+        self,
+        starting_page: usize,
+    ) -> PagerIterator<'a, S, T> {
+        let _ = self
+            .data_source
+            .seek(SeekFrom::Start((self.page_size * starting_page) as u64));
+        PagerIterator {
+            page_size: self.page_size,
+            data_source: self.data_source,
+            _marker: Default::default(),
+        }
+    }
+    /// Creates a iterator without dropping the pager
+    pub fn iter<T: DeserializeOwned + Debug>(
+        &'a mut self,
+        starting_page: usize,
+    ) -> PagerIter<'a, S, T> {
+        PagerIter {
+            curr_pos: starting_page,
+            pager: self,
+            _marker: std::marker::PhantomData::default(),
+        }
+    }
+    /// Creates a raw iterator without dropping the pager
+    pub fn raw_iter(&'a mut self, starting_page: usize) -> RawPagerIter<'a, S> {
+        RawPagerIter {
+            curr_pos: starting_page,
+            pager: self,
+        }
     }
     pub fn push<T: Serialize>(&mut self, data: &T) -> BookwormResult<()> {
         self.pages_count += 1;
         self.write_page(self.pages_count - 1, data)?;
+        Ok(())
+    }
+    pub fn push_raw(&mut self, data: &[u8]) -> BookwormResult<()> {
+        self.pages_count += 1;
+        self.write_raw_page(self.pages_count - 1, data)?;
         Ok(())
     }
     pub fn pop(&mut self) -> BookwormResult<()> {
@@ -98,16 +137,6 @@ impl<'a, S: Read + Write + Seek> Pager<'a, S> {
 pub struct RawPagerIterator<'a, S: Read + Write + Seek> {
     data_source: &'a mut S,
     page_size: usize,
-}
-
-impl<'a, S: Read + Write + Seek> Into<RawPagerIterator<'a, S>> for Pager<'a, S> {
-    fn into(self) -> RawPagerIterator<'a, S> {
-        let _ = self.data_source.rewind();
-        RawPagerIterator {
-            data_source: self.data_source,
-            page_size: self.page_size,
-        }
-    }
 }
 
 impl<S: Read + Write + Seek> Iterator for RawPagerIterator<'_, S> {
@@ -146,15 +175,86 @@ where
     }
 }
 
-impl<'a, S: Read + Write + Seek, T: DeserializeOwned> Into<PagerIterator<'a, S, T>>
-    for Pager<'a, S>
+pub struct PagerIter<'a, S: Read + Write + Seek, T: DeserializeOwned + Debug> {
+    curr_pos: usize,
+    pager: &'a mut Pager<'a, S>,
+    _marker: std::marker::PhantomData<T>,
+}
+impl<'a, S, T: DeserializeOwned + Debug> Iterator for PagerIter<'a, S, T>
+where
+    S: Read + Write + Seek,
 {
-    fn into(self) -> PagerIterator<'a, S, T> {
-        let _ = self.data_source.rewind();
-        PagerIterator {
-            page_size: self.page_size,
-            data_source: self.data_source,
-            _marker: Default::default(),
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Ok(page) = self.pager.get_page(self.curr_pos) {
+            self.curr_pos += 1;
+            Some(page)
+        } else {
+            None
         }
+    }
+}
+pub struct RawPagerIter<'a, S: Read + Write + Seek> {
+    curr_pos: usize,
+    pager: &'a mut Pager<'a, S>,
+}
+
+impl<'a, S> Iterator for RawPagerIter<'a, S>
+where
+    S: Read + Write + Seek,
+{
+    type Item = Vec<u8>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Ok(page) = self.pager.get_raw_page(self.curr_pos) {
+            self.curr_pos += 1;
+            Some(page)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+    struct TestData {
+        count: u8,
+        checked: bool,
+    }
+    impl TestData {
+        pub fn new(count: u8, checked: bool) -> Self {
+            Self { count, checked }
+        }
+    }
+    #[test]
+    fn test_iter() {
+        let mut data_source = Cursor::new(Vec::new());
+        let mut pager = Pager::new(128, &mut data_source);
+        let test_data_1 = TestData::new(10, true);
+        let test_data_2 = TestData::new(12, false);
+        pager.push(&test_data_1).unwrap();
+        pager.push(&test_data_2).unwrap();
+        let mut iter = pager.iter::<TestData>(0);
+        assert_eq!(iter.next().unwrap(), test_data_1);
+        assert_eq!(iter.next().unwrap(), test_data_2);
+    }
+    #[test]
+    fn test_raw_iter() {
+        let mut data_source = Cursor::new(Vec::new());
+        let mut pager = Pager::new(128, &mut data_source);
+        pager.push_raw(b"apple").unwrap();
+        pager.push_raw(b"grape").unwrap();
+        let mut iter = pager.raw_iter(0);
+        let first = &iter.next().unwrap();
+        let second = &iter.next().unwrap();
+        let parsed_first = String::from_utf8_lossy(first);
+        let parsed_second = String::from_utf8_lossy(second);
+        assert!(parsed_first.contains("apple"));
+        assert!(parsed_second.contains("grape"));
     }
 }
