@@ -17,9 +17,9 @@ impl TestData {
 
 #[test]
 fn test_read_write() {
-    let mut data_source = Cursor::new(Vec::new());
-    let mut swap = Cursor::new(Vec::new());
-    let mut bookworm = Bookworm::new(1024, &mut data_source, &mut swap);
+    let data_source = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let swap = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let mut bookworm = Bookworm::new(1024, data_source, swap);
     let test_data1 = TestData::new(10, true);
     let test_data2 = TestData::new(15, false);
     let test_data3 = TestData::new(20, true);
@@ -34,15 +34,15 @@ fn test_read_write() {
 
 #[test]
 fn test_iter_pages() {
-    let mut data_source = Cursor::new(Vec::new());
-    let mut swap = Cursor::new(Vec::new());
-    let mut bookworm = Bookworm::new(1024, &mut data_source, &mut swap);
+    let data_source = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let swap = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let mut bookworm = Bookworm::new(1024, data_source, swap);
     bookworm.push(&TestData::new(10, true)).unwrap();
     bookworm.push(&TestData::new(14, false)).unwrap();
     bookworm.push(&TestData::new(17, true)).unwrap();
     bookworm.push(&TestData::new(6, false)).unwrap();
 
-    let mut iterator = bookworm.get_iterator::<TestData>();
+    let mut iterator = bookworm.into_iter::<TestData>();
     assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
     assert_eq!(iterator.next().unwrap(), TestData::new(14, false));
     assert_eq!(iterator.next().unwrap(), TestData::new(17, true));
@@ -51,23 +51,24 @@ fn test_iter_pages() {
 }
 #[test]
 fn test_push() {
-    let mut data_source = Cursor::new(Vec::new());
-    let mut swap = Cursor::new(Vec::new());
-    let mut bookworm = Bookworm::new(1024, &mut data_source, &mut swap);
+    let data_source = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let swap = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+
+    let mut bookworm = Bookworm::new(1024, data_source.clone(), swap.clone());
 
     bookworm.push(&TestData::new(10, true)).unwrap();
     bookworm.push(&TestData::new(12, false)).unwrap();
     bookworm.push(&TestData::new(6, true)).unwrap();
 
-    let mut iterator = bookworm.get_iterator::<TestData>();
+    let mut iterator = bookworm.into_iter::<TestData>();
     assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
     assert_eq!(iterator.next().unwrap(), TestData::new(12, false));
     assert_eq!(iterator.next().unwrap(), TestData::new(6, true));
 
     drop(iterator);
-    let mut pager = Bookworm::new(1024, &mut data_source, &mut swap);
+    let mut pager = Bookworm::new(1024, data_source.clone(), swap.clone());
     pager.push(&TestData::new(18, false)).unwrap();
-    let mut iterator = pager.get_iterator::<TestData>();
+    let mut iterator = pager.into_iter::<TestData>();
     assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
     assert_eq!(iterator.next().unwrap(), TestData::new(12, false));
     assert_eq!(iterator.next().unwrap(), TestData::new(6, true));
@@ -75,9 +76,9 @@ fn test_push() {
 }
 #[test]
 fn test_remove_page() {
-    let mut data_source = Cursor::new(Vec::new());
-    let mut swap = Cursor::new(Vec::new());
-    let mut pager = Bookworm::new(32, &mut data_source, &mut swap);
+    let data_source = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let swap = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let mut pager = Bookworm::new(32, data_source, swap);
     let test_data = TestData::new(10, true);
     pager.push(&test_data).unwrap();
     pager.get_page::<TestData>(0).unwrap();

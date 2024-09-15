@@ -2,8 +2,10 @@
 pub mod tests;
 
 use std::{
+    cell::RefCell,
     fmt::Debug,
     io::{Read, Seek, Write},
+    rc::Rc,
 };
 
 use error::BookwormResult;
@@ -13,13 +15,13 @@ use serde::{de::DeserializeOwned, ser::Serialize};
 pub mod error;
 mod pager;
 
-pub struct Bookworm<'a, S: Read + Write + Seek> {
-    pager: Pager<'a, S>,
-    swap: Pager<'a, S>,
+pub struct Bookworm<S: Read + Write + Seek> {
+    pager: Pager<S>,
+    swap: Pager<S>,
     page_size: usize,
 }
-impl<'a, S: Read + Write + Seek> Bookworm<'a, S> {
-    pub fn new(page_size: usize, data_source: &'a mut S, swap: &'a mut S) -> Self {
+impl<'a, S: Read + Write + Seek> Bookworm<S> {
+    pub fn new(page_size: usize, data_source: Rc<RefCell<S>>, swap: Rc<RefCell<S>>) -> Self {
         Self {
             page_size,
             pager: Pager::new(page_size, data_source),
@@ -32,16 +34,10 @@ impl<'a, S: Read + Write + Seek> Bookworm<'a, S> {
     pub fn get_raw_page(&mut self, page: usize) -> BookwormResult<Vec<u8>> {
         self.pager.get_raw_page(page)
     }
-    pub fn write_raw_page(&mut self, page: usize, data: &[u8]) -> BookwormResult<()> {
-        self.pager.write_raw_page(page, data)
-    }
-    pub fn write_page<T: Serialize>(&mut self, page: usize, data: &T) -> BookwormResult<()> {
-        self.pager.write_page(page, data)
-    }
-    pub fn get_raw_iterator(self) -> RawPageIterator<'a, S> {
+    pub fn into_raw_iter(self) -> RawPageIterator<S> {
         self.into()
     }
-    pub fn get_iterator<T: DeserializeOwned>(self) -> PageIterator<'a, S, T> {
+    pub fn into_iter<T: DeserializeOwned>(self) -> PageIterator<S, T> {
         self.into()
     }
     pub fn push<T: Serialize>(&mut self, data: &T) -> BookwormResult<()> {
@@ -55,19 +51,19 @@ impl<'a, S: Read + Write + Seek> Bookworm<'a, S> {
     }
 }
 
-pub struct RawPageIterator<'a, S: Read + Write + Seek> {
-    pager_iterator: RawPagerIterator<'a, S>,
+pub struct RawPageIterator<S: Read + Write + Seek> {
+    pager_iterator: RawPagerIterator<S>,
 }
 
-impl<'a, S: Read + Write + Seek> Into<RawPageIterator<'a, S>> for Bookworm<'a, S> {
-    fn into(self) -> RawPageIterator<'a, S> {
+impl<'a, S: Read + Write + Seek> Into<RawPageIterator<S>> for Bookworm<S> {
+    fn into(self) -> RawPageIterator<S> {
         RawPageIterator {
             pager_iterator: self.pager.into_raw_iterator(0),
         }
     }
 }
 
-impl<S: Read + Write + Seek> Iterator for RawPageIterator<'_, S> {
+impl<S: Read + Write + Seek> Iterator for RawPageIterator<S> {
     type Item = Vec<u8>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -75,12 +71,12 @@ impl<S: Read + Write + Seek> Iterator for RawPageIterator<'_, S> {
     }
 }
 
-pub struct PageIterator<'a, S: Read + Write + Seek, T: DeserializeOwned> {
-    pager_iterator: PagerIterator<'a, S, T>,
+pub struct PageIterator<S: Read + Write + Seek, T: DeserializeOwned> {
+    pager_iterator: PagerIterator<S, T>,
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<S, T> Iterator for PageIterator<'_, S, T>
+impl<S, T> Iterator for PageIterator<S, T>
 where
     S: Read + Write + Seek,
     T: DeserializeOwned,
@@ -92,11 +88,11 @@ where
     }
 }
 
-impl<'a, S: Read + Write + Seek, T: DeserializeOwned> Into<PageIterator<'a, S, T>>
-    for Bookworm<'a, S>
-{
-    fn into(self) -> PageIterator<'a, S, T> {
-        let _ = self.pager.data_source.rewind();
+impl<'a, S: Read + Write + Seek, T: DeserializeOwned> Into<PageIterator<S, T>> for Bookworm<S> {
+    fn into(self) -> PageIterator<S, T> {
+        let mut data_source = self.pager.data_source.borrow_mut();
+        let _ = data_source.rewind();
+        drop(data_source);
         PageIterator {
             pager_iterator: self.pager.into_iterator(0),
             _marker: Default::default(),
