@@ -66,9 +66,9 @@ fn test_push() {
     assert_eq!(iterator.next().unwrap(), TestData::new(6, true));
 
     drop(iterator);
-    let mut pager = Bookworm::new(1024, data_source.clone(), swap.clone());
-    pager.push(&TestData::new(18, false)).unwrap();
-    let mut iterator = pager.into_iter::<TestData>();
+    let mut bookworm = Bookworm::new(1024, data_source.clone(), swap.clone());
+    bookworm.push(&TestData::new(18, false)).unwrap();
+    let mut iterator = bookworm.into_iter::<TestData>();
     assert_eq!(iterator.next().unwrap(), TestData::new(10, true));
     assert_eq!(iterator.next().unwrap(), TestData::new(12, false));
     assert_eq!(iterator.next().unwrap(), TestData::new(6, true));
@@ -84,4 +84,19 @@ fn test_remove_page() {
     pager.get_page::<TestData>(0).unwrap();
     pager.pop().unwrap();
     pager.get_page::<TestData>(0).unwrap_err();
+}
+#[test]
+fn test_delete_page() {
+    let data_source = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let swap = Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let mut bookworm = Bookworm::new(32, data_source, swap);
+
+    bookworm.push(&TestData::new(10, true)).unwrap();
+    bookworm.push(&TestData::new(12, false)).unwrap();
+    bookworm.push(&TestData::new(6, true)).unwrap();
+
+    bookworm.delete(1).unwrap();
+    let mut pages_iter = bookworm.into_iter::<TestData>();
+    assert_eq!(pages_iter.next().unwrap(), TestData::new(10, true));
+    assert_eq!(pages_iter.next().unwrap(), TestData::new(6, true));
 }

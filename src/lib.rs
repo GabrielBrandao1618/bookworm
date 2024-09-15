@@ -47,6 +47,16 @@ impl<'a, S: Read + Write + Seek> Bookworm<S> {
         self.pager.pop()
     }
     pub fn delete(&mut self, page: usize) -> BookwormResult<()> {
+        let remaining_content_iter = self.pager.raw_iter(page + 1);
+        for data in remaining_content_iter {
+            self.swap.push_raw(&data)?;
+        }
+        let swap_iter = self.swap.raw_iter(0);
+        for (i, data) in swap_iter.enumerate() {
+            self.pager.write_raw_page(i + page, &data)?;
+        }
+        self.pager.pages_count -= 1;
+        self.swap.clear();
         Ok(())
     }
 }

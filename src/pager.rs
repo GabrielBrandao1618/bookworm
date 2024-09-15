@@ -5,6 +5,7 @@ use std::{
     rc::Rc,
 };
 
+use bincode::serialize;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::{BookwormError, BookwormResult};
@@ -12,7 +13,7 @@ use crate::error::{BookwormError, BookwormResult};
 pub struct Pager<S: Read + Write + Seek> {
     pub data_source: Rc<RefCell<S>>,
     page_size: usize,
-    pages_count: usize,
+    pub pages_count: usize,
 }
 
 impl<S: Read + Write + Seek> Pager<S> {
@@ -48,9 +49,14 @@ impl<S: Read + Write + Seek> Pager<S> {
             .map_err(|_| BookwormError::new("Could not read page".to_string()))?;
         Ok(buf)
     }
-    fn write_raw_page(&mut self, page: usize, data: &[u8]) -> BookwormResult<()> {
+    pub fn write_raw_page(&mut self, page: usize, data: &[u8]) -> BookwormResult<()> {
         if page >= self.pages_count {
             return Err(BookwormError::new("Page doesn't exist".to_string()));
+        }
+        if data.len() > self.page_size {
+            return Err(BookwormError::new(
+                "Could not write data to page: data is bigger than page".to_string(),
+            ));
         }
         let mut data_source = self.data_source.borrow_mut();
         let page_offset = self.page_size * page;
@@ -66,12 +72,17 @@ impl<S: Read + Write + Seek> Pager<S> {
             .map_err(|_| BookwormError::new("Could not write page".to_string()))?;
         Ok(())
     }
-    fn write_page<T: Serialize>(&mut self, page: usize, data: &T) -> BookwormResult<()> {
+    pub fn write_page<T: Serialize>(&mut self, page: usize, data: &T) -> BookwormResult<()> {
         if page >= self.pages_count {
             return Err(BookwormError::new("Page doesn't exist".to_string()));
         }
         let serialized = bincode::serialize(data)
             .map_err(|_| BookwormError::new("Could not serialize data".to_string()))?;
+        if serialized.len() > self.page_size {
+            return Err(BookwormError::new(
+                "Could not write data to page: data is bigger than page".to_string(),
+            ));
+        }
         self.write_raw_page(page, &serialized)
             .map_err(|_| BookwormError::new("Could not write page".to_string()))?;
         Ok(())
@@ -132,6 +143,9 @@ impl<S: Read + Write + Seek> Pager<S> {
             .write_all(&data)
             .map_err(|_| BookwormError::new("Could not remove page".to_owned()))?;
         Ok(())
+    }
+    pub fn clear(&mut self) {
+        self.pages_count = 0;
     }
 }
 
